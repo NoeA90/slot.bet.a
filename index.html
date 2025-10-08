@@ -303,9 +303,12 @@ function renderWinFX(){
   const leftX=c1.left, rightX=c3.right;
 
   fxCtx.save();
-  fxCtx.lineWidth=6*dpr;
-  fxCtx.strokeStyle="rgba(124,77,255,.65)";
-  fxCtx.fillStyle="rgba(34,211,238,.22)";
+  /* ——— brillo dorado más intenso ——— */
+  fxCtx.lineWidth = 8 * dpr;
+  fxCtx.strokeStyle = "rgba(255,215,0,.88)";
+  fxCtx.shadowBlur = 28 * dpr;
+  fxCtx.shadowColor = "rgba(255,215,0,.95)";
+  fxCtx.fillStyle = "rgba(255,215,0,.20)";
 
   function band(y){
     const pad=6*dpr, h=cell*0.84*dpr, y0=Y(y-(h/dpr)/2), x0=X(leftX)+pad, x1=X(rightX)-pad, r=12*dpr;
@@ -533,11 +536,10 @@ function visibleFor(colIndex){
   return { top, center, bottom };
 }
 
-/* Evaluación de líneas: rectas (arriba/centro/abajo) y diagonales (↘, ↗)
-   Reglas:
+/* ===== EVALUACIÓN DE LÍNEAS (corregida) =====
    - JACKPOT: 3 BET300 en la línea
-   - TRIPLE : 3 iguales (no BET300) en la línea
-   - PAR    : dos iguales ADYACENTES (r3==r2 o r2==r1) y el tercero distinto
+   - TRIPLE : 3 iguales (no BET300)
+   - PAR    : dos iguales adyacentes (1–2 o 2–3) y el tercero distinto
 */
 function evaluateLines(grid){
   const lines = [
@@ -548,21 +550,19 @@ function evaluateLines(grid){
     {name:"Diag ↗", r:[grid.r1.bottom, grid.r2.center, grid.r3.top]},
   ];
 
-  // 1) JACKPOT / TRIPLE (prioridad máxima)
+  // 1) JACKPOT / TRIPLE
   for (const L of lines){
-    const [r1, r2, r3] = L.r;
-    if (r1 === r2 && r2 === r3){
-      if (r1 === "BET300") return {kind:"jackpot", prize:10000, line:L.name, symbol:r1};
-      return {kind:"triple", prize:5000, line:L.name, symbol:r1};
+    const [a,b,c] = L.r;
+    if (a===b && b===c){
+      if (a==="BET300") return {kind:"jackpot", prize:10000, line:L.name, symbol:a};
+      return {kind:"triple", prize:5000, line:L.name, symbol:a};
     }
   }
 
-  // 2) PAR ADYACENTE en cualquiera de los lados (r3==r2 ó r2==r1) y el tercero distinto
+  // 2) PAR ADYACENTE (1–2 o 2–3) con tercero distinto
   for (const L of lines){
-    const [r1, r2, r3] = L.r;
-    const rightPair = (r3 === r2 && r1 !== r2); // derecha→centro
-    const leftPair  = (r2 === r1 && r3 !== r2); // centro→izquierda
-    if (rightPair || leftPair){
+    const [a,b,c] = L.r;
+    if ((a===b && c!==a) || (b===c && a!==b)){
       return {kind:"pair", prize:2000, line:L.name};
     }
   }
@@ -570,9 +570,6 @@ function evaluateLines(grid){
   // 3) Sin acierto
   return {kind:"none", prize:1000, line:null};
 }
-
-
-
 
 /* ===== Animación ===== */
 document.addEventListener('click',()=>AudioKit.unlock(),{once:true});
@@ -653,14 +650,33 @@ async function onStop(){
   claimBtn.disabled=false;
   claimBtn.onclick=()=>location.href=`https://wa.me/${WP}?text=${encodeURIComponent(msg)}`;
 
-  const centersNow = [grid.r1.center, grid.r2.center, grid.r3.center];
-  const lineTxt = verdict.line ? ` · Línea: ${verdict.line}` : '';
-  const centersTxt = `Centro: ${centersNow.join(" | ")}`;
-  resultLine.textContent =
-    (verdict.kind==="jackpot") ? `3 logos BET300${lineTxt}. ${centersTxt}` :
-    (verdict.kind==="triple")  ? `3 iguales${lineTxt}. ${centersTxt}` :
-    (verdict.kind==="pair")    ? `2 iguales${lineTxt}. ${centersTxt}` :
-                                 `Sin acierto. ${centersTxt}`;
+  // —— Texto de resultado REAL + símbolos de la línea ganadora ——
+  const labelMap = {
+    jackpot: "3 logos BET300",
+    triple:  "3 iguales",
+    pair:    "2 iguales",
+    none:    "Sin acierto"
+  };
+
+  function symbolsOf(lineName){
+    switch(lineName){
+      case "Arriba": return [grid.r1.top, grid.r2.top, grid.r3.top];
+      case "Centro": return [grid.r1.center, grid.r2.center, grid.r3.center];
+      case "Abajo":  return [grid.r1.bottom, grid.r2.bottom, grid.r3.bottom];
+      case "Diag ↘": return [grid.r1.top, grid.r2.center, grid.r3.bottom];
+      case "Diag ↗": return [grid.r1.bottom, grid.r2.center, grid.r3.top];
+      default: return null;
+    }
+  }
+
+  if (verdict.line){
+    const sym = symbolsOf(verdict.line).join(" | ");
+    resultLine.textContent = `${labelMap[verdict.kind]} • Línea: ${verdict.line} • Símbolos: ${sym}`;
+  } else {
+    // sin línea ganadora: muestro centros como referencia
+    const centersNow = [grid.r1.center, grid.r2.center, grid.r3.center];
+    resultLine.textContent = `${labelMap[verdict.kind]} • Centro: ${centersNow.join(" | ")}`;
+  }
 
   if(verdict.line) flashWin(verdict.line);
   if(soundOn) AudioKit.win();
@@ -679,7 +695,7 @@ function init(){
   restoreDaily(); restorePrizeIfAny(); tickCountdown();
   setInterval(tickCountdown,1000); scheduleMidnightReset();
   reelY=[0,0,0];
-  startRenderLoop(); // <— arranca el loop de dibujo cuando todo ya está dimensionado
+  startRenderLoop();
 }
 init();
 </script>
